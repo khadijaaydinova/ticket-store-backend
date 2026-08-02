@@ -19,7 +19,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 # --- Локальные импорты проекта ---
 from .models import (
     Event, Order, Ticket, OrderItem, TicketType, PromoCode,
-    ResaleListing, MembershipPlan, UserSubscription
+    ResaleListing, MembershipPlan, UserSubscription, GiftCard
 )
 from .serializers import (
     EventSerializer,
@@ -455,19 +455,21 @@ class OrderViewSet(viewsets.ModelViewSet):
     @extend_schema(
         request=CheckoutSerializer,
         summary="Оформление заказа (Guest Checkout)",
-        description="Генерация билетов, промокоды и опциональная страховка."
+        description="Генерация билетов, промокоды, подарочные карты и опциональная страховка."
     )
     @action(detail=False, methods=['post'], permission_classes=[])
     def checkout(self, request):
         items = request.data.get('items')
         promo_code_str = request.data.get('promo_code', None)
         add_insurance = request.data.get('add_insurance', False)
+        gift_card_code = request.data.get('gift_card_code', None)  # <-- Получаем код карты из запроса
 
         if not items or not isinstance(items, list):
             return Response({"error": "Корзина пуста или неверный формат items"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             with transaction.atomic():
+                # 1. Создаем "пустой" заказ (цены обновим в конце)
                 order = Order.objects.create(
                     user=request.user if request.user.is_authenticated else None,
                     total_price=0,
@@ -478,6 +480,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 total_price = Decimal('0.00')
                 tickets_generated = 0
 
+                # 2. Считаем стоимость билетов и создаем их в базе
                 for item in items:
                     ticket_type_id = item.get('ticket_type_id')
                     quantity = int(item.get('quantity', 1))
@@ -512,6 +515,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                     ticket_type.quantity_sold += quantity
                     ticket_type.save()
 
+                # 3. Применяем промокод (если есть)
                 discount_amount = Decimal('0.00')
                 if promo_code_str:
                     try:
@@ -528,25 +532,56 @@ class OrderViewSet(viewsets.ModelViewSet):
                     except PromoCode.DoesNotExist:
                         pass
 
+                # 4. Считаем страховку (если выбрана)
                 insurance_fee = Decimal('0.00')
                 if add_insurance:
                     insurance_fee = total_price * Decimal('0.07')
                     order.has_insurance = True
                     order.insurance_fee = insurance_fee
 
+                # 5. Считаем промежуточную цену (до подарочной карты)
                 final_price = max(Decimal('0.00'), total_price - discount_amount) + insurance_fee
 
+                # 6. --- БЛОК GIFT CARD ---
+                gift_card_discount = Decimal('0.00')
+                if gift_card_code:
+                    try:
+                        gift_card_obj = GiftCard.objects.get(code=gift_card_code, is_active=True)
+
+                        if gift_card_obj.current_balance > 0:
+                            if gift_card_obj.current_balance >= final_price:
+                                gift_card_discount = final_price
+                                gift_card_obj.current_balance -= final_price
+                                final_price = Decimal('0.00')
+                            else:
+                                gift_card_discount = gift_card_obj.current_balance
+                                final_price -= gift_card_obj.current_balance
+                                gift_card_obj.current_balance = Decimal('0.00')
+
+                            gift_card_obj.save()
+                            order.gift_card = gift_card_obj
+                            order.gift_card_discount = gift_card_discount
+                        else:
+                            raise ValueError("Баланс подарочной карты равен 0")
+
+                    except GiftCard.DoesNotExist:
+                        raise ValueError("Неверная или неактивная подарочная карта")
+                # --- КОНЕЦ БЛОКА GIFT CARD ---
+
+                # 7. Обновляем итоговые цифры в заказе и сохраняем его
                 order.total_price = total_price
                 order.discount_amount = discount_amount
                 order.final_price = final_price
                 order.save()
 
+            # Если мы дошли сюда, транзакция успешно завершена!
             return Response({
                 "message": "Заказ успешно оформлен!",
                 "order_id": order.id,
                 "total_price": str(order.total_price),
                 "discount_amount": str(order.discount_amount),
                 "insurance_fee": str(order.insurance_fee),
+                "gift_card_discount": str(gift_card_discount) if gift_card_code else "0.00",
                 "final_price": str(order.final_price),
                 "tickets_generated": tickets_generated
             }, status=status.HTTP_201_CREATED)
@@ -554,6 +589,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         except TicketType.DoesNotExist:
             return Response({"error": "Один из типов билетов не найден"}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
+            # Сюда прилетят ошибки про закончившиеся билеты или пустые подарочные карты
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": f"Внутренняя ошибка: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

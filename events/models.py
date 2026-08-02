@@ -2,6 +2,8 @@ from django.db import models
 
 # Create your models here.
 import uuid # <--- Добавь это в самую верхнюю строчку файла к остальным импортам
+import string
+import random
 from django.db import models
 from users.models import Organization
 from django.conf import settings
@@ -151,6 +153,8 @@ class Order(models.Model):
     has_insurance = models.BooleanField(default=False, verbose_name="Страховка отмены")
     insurance_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Стоимость страховки")
 
+    gift_card = models.ForeignKey('GiftCard', on_delete=models.SET_NULL, null=True, blank=True)
+    gift_card_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     # НОВЫЕ ПОЛЯ ДЛЯ СКИДКИ:
     promo_code = models.ForeignKey(PromoCode, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
@@ -280,3 +284,19 @@ class UserSubscription(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.plan.name} ({self.status})"
+
+
+# Функция для генерации красивого кода (например: A7X9-P2M4-K8J1)
+def generate_gift_card_code():
+    chars = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+    return f"{chars[:4]}-{chars[4:8]}-{chars[8:]}"
+
+class GiftCard(models.Model):
+    code = models.CharField(max_length=14, unique=True, default=generate_gift_card_code)
+    initial_balance = models.DecimalField(max_digits=10, decimal_places=2)
+    current_balance = models.DecimalField(max_digits=10, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"GiftCard {self.code} | Balance: {self.current_balance}"

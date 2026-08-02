@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Event, TicketType, PromoCode, Order, OrderItem, Ticket, ExchangeRate, ResaleListing
+from .models import Event, TicketType, PromoCode, Order, OrderItem, Ticket, ExchangeRate, ResaleListing, GiftCard
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
@@ -58,6 +58,13 @@ class ResaleListingAdmin(admin.ModelAdmin):
 
 admin.site.register(PromoCode)
 admin.site.register(ExchangeRate)
+
+@admin.register(GiftCard)
+class GiftCardAdmin(admin.ModelAdmin):
+    list_display = ('code', 'initial_balance', 'current_balance', 'is_active', 'created_at')
+    list_filter = ('is_active',)
+    search_fields = ('code',)
+    readonly_fields = ('created_at',)
 
 # from django.contrib import admin
 # from .models import Event, TicketType, ExchangeRate, PromoCode, Order, OrderItem, ResaleListing
