@@ -300,3 +300,61 @@ class GiftCard(models.Model):
 
     def __str__(self):
         return f"GiftCard {self.code} | Balance: {self.current_balance}"
+
+
+# ==========================================
+# МОДУЛЬ 6: КОНФЕРЕНЦИИ И КОРПОРАТИВНЫЕ МЕРОПРИЯТИЯ
+# ==========================================
+
+class Speaker(models.Model):
+    """Модель спикера (выступающего) на мероприятии (пункт 6.2)"""
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='speakers')
+    name = models.CharField(max_length=255, verbose_name="Имя спикера")
+    bio = models.TextField(blank=True, null=True, verbose_name="Биография")
+    company = models.CharField(max_length=255, blank=True, null=True, verbose_name="Компания / Должность")
+    linkedin_url = models.URLField(blank=True, null=True, verbose_name="Ссылка на LinkedIn")
+    photo_url = models.URLField(blank=True, null=True,
+                                verbose_name="Ссылка на фото")  # Пока используем URL, позже можно прикрутить ImageField
+
+    def __str__(self):
+        return f"{self.name} ({self.company}) - {self.event.title}"
+
+
+class AgendaSession(models.Model):
+    """
+    Модель конкретной сессии (выступления/воркшопа) в рамках мероприятия.
+    Позволяет делать параллельные потоки (Multi-track agenda builder - пункт 6.3)
+    """
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='agenda_sessions')
+    title = models.CharField(max_length=255, verbose_name="Название сессии")
+    description = models.TextField(blank=True, null=True)
+
+    # Спикеры, выступающие на этой сессии (может быть несколько на панельной дискуссии)
+    speakers = models.ManyToManyField(Speaker, blank=True, related_name='sessions')
+
+    start_time = models.DateTimeField(verbose_name="Время начала")
+    end_time = models.DateTimeField(verbose_name="Время окончания")
+
+    # Для пункта 5.2 (Multiple Hall Event) и 6.3 (Multi-track)
+    location_hall = models.CharField(max_length=255, blank=True, null=True,
+                                     help_text="Название зала (например, Зал А, Main Stage)")
+    track_name = models.CharField(max_length=255, blank=True, null=True,
+                                  help_text="Название потока (например, Tech Track, Marketing Track)")
+
+    def __str__(self):
+        return f"{self.title} | {self.start_time.strftime('%H:%M')} - {self.end_time.strftime('%H:%M')} ({self.location_hall})"
+
+
+class AttendeeSchedule(models.Model):
+    """
+    Персонализированное расписание участника (Qonaqlar öz şəxsi cədvəlini yığır - пункт 6.3)
+    """
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='my_schedule')
+    session = models.ForeignKey(AgendaSession, on_delete=models.CASCADE, related_name='attendees')
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'session')  # Один юзер не может добавить одну сессию дважды
+
+    def __str__(self):
+        return f"{self.user.email} -> {self.session.title}"

@@ -15,6 +15,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+from django.db.models import Sum, Count, F
+
+# Убедись, что импортировал новые модели и сериализаторы
+from .models import Speaker, AgendaSession, AttendeeSchedule
+from .serializers import SpeakerSerializer, AgendaSessionSerializer, AttendeeScheduleSerializer
 
 # --- Локальные импорты проекта ---
 from .models import (
@@ -273,6 +278,65 @@ class EventViewSet(viewsets.ModelViewSet):
     filterset_fields = ['city', 'category']
     search_fields = ['title', 'description']
     ordering_fields = ['start_date', 'created_at']
+
+    @extend_schema(summary="Получить аналитику и статистику продаж по мероприятию")
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def analytics(self, request, pk=None):
+        event = self.get_object()
+
+        # БЕЗОПАСНОСТЬ: Проверяем, что аналитику запрашивает организатор этого мероприятия (или админ)
+        # Если у тебя в модели Event есть поле organization, а у organization есть владелец/члены:
+        # БЕЗОПАСНОСТЬ: Проверяем, есть ли у юзера нужная роль в организации
+        has_access = request.user.memberships.filter(
+            organization=event.organization,
+            role__in=['OWNER', 'ADMIN', 'MANAGER']  # Кому разрешаем видеть аналитику
+        ).exists()
+
+        if not request.user.is_superuser and not has_access:
+            return Response({"error": "У вас нет прав для просмотра аналитики этого мероприятия."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # 1. Общее количество проданных билетов (активных)
+        total_tickets_sold = Ticket.objects.filter(
+            ticket_type__event=event,
+            is_active=True,
+            order__status='PAID'
+        ).count()
+
+        # 2. Общая выручка (Сумма всех проданных позиций)
+        revenue_data = OrderItem.objects.filter(
+            ticket_type__event=event,
+            order__status='PAID'
+        ).aggregate(total_revenue=Sum('price_at_purchase'))
+
+        total_revenue = revenue_data['total_revenue'] or Decimal('0.00')
+
+        # 3. Статистика сканирований (Check-in конверсия)
+        scanned_tickets = Ticket.objects.filter(
+            ticket_type__event=event,
+            is_active=True,
+            is_scanned=True
+        ).count()
+
+        checkin_conversion = 0
+        if total_tickets_sold > 0:
+            checkin_conversion = round((scanned_tickets / total_tickets_sold) * 100, 2)
+
+        # 4. Статистика по типам билетов (VIP, Standard и т.д.)
+        ticket_types_stats = TicketType.objects.filter(event=event).annotate(
+            tickets_sold=Count('order_items', filter=F('order_items__order__status') == 'PAID')
+        ).values('name', 'price', 'quantity_total', 'tickets_sold')
+
+        return Response({
+            "event_title": event.title,
+            "overall_stats": {
+                "total_revenue": str(total_revenue),
+                "total_tickets_sold": total_tickets_sold,
+                "total_scanned_at_entrance": scanned_tickets,
+                "checkin_conversion_percent": f"{checkin_conversion}%"
+            },
+            "by_ticket_type": list(ticket_types_stats)
+        }, status=status.HTTP_200_OK)
 
     @extend_schema(
         parameters=[
@@ -593,3 +657,55 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": f"Внутренняя ошибка: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SpeakerViewSet(viewsets.ModelViewSet):
+    queryset = Speaker.objects.all()
+    serializer_class = SpeakerSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['event']  # Позволит искать спикеров конкретного ивента
+    search_fields = ['name', 'company']
+
+
+class AgendaSessionViewSet(viewsets.ModelViewSet):
+    queryset = AgendaSession.objects.all().order_by('start_time')
+    serializer_class = AgendaSessionSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    # Позволяет фильтровать по залам (Multiple Halls) и потокам (Multi-track)
+    filterset_fields = ['event', 'location_hall', 'track_name']
+    search_fields = ['title', 'description']
+
+    @extend_schema(summary="Добавить сессию в личное расписание участника")
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def add_to_schedule(self, request, pk=None):
+        session = self.get_object()
+        schedule, created = AttendeeSchedule.objects.get_or_create(user=request.user, session=session)
+
+        if not created:
+            return Response({"message": "Эта сессия уже есть в вашем расписании."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"message": "Сессия успешно добавлена в ваше расписание!"}, status=status.HTTP_201_CREATED)
+
+    @extend_schema(summary="Удалить сессию из личного расписания")
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def remove_from_schedule(self, request, pk=None):
+        session = self.get_object()
+        deleted, _ = AttendeeSchedule.objects.filter(user=request.user, session=session).delete()
+
+        if deleted:
+            return Response({"message": "Сессия удалена из расписания."}, status=status.HTTP_200_OK)
+        return Response({"error": "Этой сессии нет в вашем расписании."}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MyScheduleViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Эндпоинт для просмотра участником своего собранного расписания (My Agenda).
+    """
+    serializer_class = AttendeeScheduleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Пользователь видит только свои добавленные сессии, отсортированные по времени
+        return AttendeeSchedule.objects.filter(user=self.request.user).order_by('session__start_time')

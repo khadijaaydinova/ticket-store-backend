@@ -4,6 +4,7 @@ from .models import Event, TicketType, Order, OrderItem, Ticket # Не забу�
 from .models import ExchangeRate
 from decimal import Decimal # Убедись, что Decimal импортирован
 from .models import ResaleListing, OrderItem # Добавь ResaleListing в импорты
+from .models import Speaker, AgendaSession, AttendeeSchedule
 
 
 
@@ -267,3 +268,25 @@ class UserSubscriptionSerializer(serializers.ModelSerializer):
 
 class SubscribeRequestSerializer(serializers.Serializer):
     plan_id = serializers.IntegerField(required=True)
+
+class SpeakerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Speaker
+        fields = '__all__'
+
+class AgendaSessionSerializer(serializers.ModelSerializer):
+    # Добавляем вложенный сериализатор, чтобы при запросе расписания
+    # мы сразу видели детальную инфу о спикерах, а не просто их ID
+    speaker_details = SpeakerSerializer(source='speakers', many=True, read_only=True)
+
+    class Meta:
+        model = AgendaSession
+        fields = '__all__'
+
+class AttendeeScheduleSerializer(serializers.ModelSerializer):
+    session_details = AgendaSessionSerializer(source='session', read_only=True)
+
+    class Meta:
+        model = AttendeeSchedule
+        fields = ['id', 'session', 'session_details', 'added_at']
+        read_only_fields = ['user']
