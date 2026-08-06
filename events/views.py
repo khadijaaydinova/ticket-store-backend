@@ -18,8 +18,12 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from django.db.models import Sum, Count, F
 
 # Убедись, что импортировал новые модели и сериализаторы
-from .models import Speaker, AgendaSession, AttendeeSchedule
-from .serializers import SpeakerSerializer, AgendaSessionSerializer, AttendeeScheduleSerializer
+from .models import Speaker, AgendaSession, AttendeeSchedule, AbstractSubmission, Sponsor, PollOption, PollVote, \
+    LivePoll, QAQuestion
+from .serializers import SpeakerSerializer, AgendaSessionSerializer, AttendeeScheduleSerializer, \
+    AbstractSubmissionSerializer, SponsorSerializer, LivePollSerializer, QAQuestionSerializer
+
+from django.db import IntegrityError
 
 # --- Локальные импорты проекта ---
 from .models import (
@@ -709,3 +713,130 @@ class MyScheduleViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         # Пользователь видит только свои добавленные сессии, отсортированные по времени
         return AttendeeSchedule.objects.filter(user=self.request.user).order_by('session__start_time')
+
+
+class SponsorViewSet(viewsets.ModelViewSet):
+    """
+    CRUD для спонсоров мероприятия.
+    """
+    queryset = Sponsor.objects.all()
+    serializer_class = SponsorSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event', 'level']  # Позволяет фильтровать по уровню (Gold, Platinum)
+
+
+class AbstractSubmissionViewSet(viewsets.ModelViewSet):
+    """
+    Портал подачи заявок для спикеров.
+    """
+    serializer_class = AbstractSubmissionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event', 'status']
+
+    def get_queryset(self):
+        # БЕЗОПАСНОСТЬ: Администраторы видят все заявки, обычные юзеры — только свои
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return AbstractSubmission.objects.all().order_by('-submitted_at')
+        return AbstractSubmission.objects.filter(applicant=self.request.user).order_by('-submitted_at')
+
+    def perform_create(self, serializer):
+        # При создании заявки мы автоматически привязываем к ней текущего залогиненного юзера
+        serializer.save(applicant=self.request.user)
+
+    @extend_schema(
+        summary="Изменить статус заявки (Одобрить/Отклонить)",
+        request={
+            'application/json': {'type': 'object', 'properties': {'status': {'type': 'string', 'example': 'ACCEPTED'}}}}
+    )
+    @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAdminUser])
+    def change_status(self, request, pk=None):
+        """
+        Специальный эндпоинт для организаторов (Admin), чтобы одобрять или отклонять заявки.
+        """
+        submission = self.get_object()
+        new_status = request.data.get('status')
+
+        if new_status not in ['ACCEPTED', 'REJECTED', 'PENDING']:
+            return Response({"error": "Неверный статус. Допустимые значения: ACCEPTED, REJECTED, PENDING."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        submission.status = new_status
+        submission.save()
+
+        # 💡 Фича для резюме: Если статус ACCEPTED, можно автоматически создать
+        # запись в таблице Speaker, чтобы организатору не приходилось делать это вручную!
+        # if new_status == 'ACCEPTED':
+        #     Speaker.objects.get_or_create(event=submission.event, name=submission.applicant.first_name)
+
+        return Response({"message": f"Статус заявки успешно изменен на {new_status}!"}, status=status.HTTP_200_OK)
+
+
+class QAQuestionViewSet(viewsets.ModelViewSet):
+    """
+    Вопросы из зала (Live Q&A).
+    """
+    # Сортируем вопросы так, чтобы самые залайканные и свежие были наверху
+    queryset = QAQuestion.objects.all().order_by('-upvotes', '-created_at')
+    serializer_class = QAQuestionSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event', 'is_answered']
+
+    def perform_create(self, serializer):
+        # Привязываем вопрос к текущему пользователю
+        serializer.save(user=self.request.user)
+
+    @extend_schema(summary="Поставить лайк вопросу (Upvote)", request=None)
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def upvote(self, request, pk=None):
+        """
+        Кастомный эндпоинт для лайков.
+        Не требует тела запроса, просто дергаем POST /api/qa-questions/{id}/upvote/
+        """
+        question = self.get_object()
+        question.upvotes += 1
+        question.save()
+        return Response({'message': 'Лайк поставлен!', 'upvotes': question.upvotes}, status=status.HTTP_200_OK)
+
+
+class LivePollViewSet(viewsets.ModelViewSet):
+    """
+    Опросы в реальном времени.
+    """
+    queryset = LivePoll.objects.all()
+    serializer_class = LivePollSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['event', 'is_active']
+
+    @extend_schema(
+        summary="Проголосовать в опросе",
+        request={'application/json': {'type': 'object', 'properties': {'option_id': {'type': 'integer', 'example': 1}}}}
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def vote(self, request, pk=None):
+        """
+        Эндпоинт для голосования. Юзер передает ID варианта ответа.
+        """
+        poll = self.get_object()
+        option_id = request.data.get('option_id')
+
+        if not poll.is_active:
+            return Response({"error": "Это голосование уже завершено."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Ищем вариант ответа. Убеждаемся, что он принадлежит именно этому опросу
+            option = PollOption.objects.get(id=option_id, poll=poll)
+
+            # Пытаемся сохранить голос
+            PollVote.objects.create(poll=poll, option=option, user=request.user)
+            return Response({"message": "Ваш голос успешно учтен!"}, status=status.HTTP_201_CREATED)
+
+        except PollOption.DoesNotExist:
+            return Response({"error": "Такого варианта ответа не существует."}, status=status.HTTP_404_NOT_FOUND)
+        except IntegrityError:
+            # Сработала наша защита unique_together = ('poll', 'user') из базы данных!
+            return Response({"error": "Вы уже голосовали в этом опросе! Накрутка запрещена."},
+                            status=status.HTTP_403_FORBIDDEN)

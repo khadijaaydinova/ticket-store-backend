@@ -5,6 +5,8 @@ from .models import ExchangeRate
 from decimal import Decimal # Убедись, что Decimal импортирован
 from .models import ResaleListing, OrderItem # Добавь ResaleListing в импорты
 from .models import Speaker, AgendaSession, AttendeeSchedule
+from .models import AbstractSubmission, Sponsor
+from .models import QAQuestion, LivePoll, PollOption, PollVote
 
 
 
@@ -290,3 +292,35 @@ class AttendeeScheduleSerializer(serializers.ModelSerializer):
         model = AttendeeSchedule
         fields = ['id', 'session', 'session_details', 'added_at']
         read_only_fields = ['user']
+
+class SponsorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Sponsor
+        fields = '__all__'
+
+class AbstractSubmissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AbstractSubmission
+        fields = '__all__'
+        # БЕЗОПАСНОСТЬ: запрещаем юзеру самому передавать статус и подменять автора!
+        read_only_fields = ['applicant', 'status', 'submitted_at']
+
+class QAQuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QAQuestion
+        fields = '__all__'
+        # БЕЗОПАСНОСТЬ: запрещаем юзеру подменять автора, статусы и накручивать лайки вручную
+        read_only_fields = ['user', 'upvotes', 'is_answered', 'created_at']
+
+class PollOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PollOption
+        fields = ['id', 'text']
+
+class LivePollSerializer(serializers.ModelSerializer):
+    # Вкладываем варианты ответа прямо в опрос, чтобы фронтенду было удобно их рендерить
+    options = PollOptionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = LivePoll
+        fields = '__all__'

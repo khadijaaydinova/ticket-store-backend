@@ -358,3 +358,114 @@ class AttendeeSchedule(models.Model):
 
     def __str__(self):
         return f"{self.user.email} -> {self.session.title}"
+
+
+class AbstractSubmission(models.Model):
+    """
+    Модель для пункта 6.1. Abstract submission portalı
+    Пользователи могут предлагать свои темы для выступления на конференции.
+    """
+    STATUS_CHOICES = [
+        ('PENDING', 'Gözlənilir (Pending)'),
+        ('ACCEPTED', 'Qəbul edilib (Accepted)'),
+        ('REJECTED', 'Rədd edilib (Rejected)'),
+    ]
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='abstract_submissions')
+    applicant = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='my_submissions')
+
+    title = models.CharField(max_length=255, verbose_name="Тема выступления")
+    summary = models.TextField(verbose_name="Краткое описание (Abstract)")
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.title} - {self.applicant.email} ({self.status})"
+
+
+class Sponsor(models.Model):
+    """
+    Модель для пункта 6.4. Sponsor və exhibitor portalı
+    Спонсоры мероприятия с разными уровнями (Platinum, Gold и т.д.)
+    """
+    LEVEL_CHOICES = [
+        ('PLATINUM', 'Platinum'),
+        ('GOLD', 'Gold'),
+        ('SILVER', 'Silver'),
+        ('BRONZE', 'Bronze'),
+    ]
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='sponsors')
+    name = models.CharField(max_length=255, verbose_name="Название компании")
+    level = models.CharField(max_length=20, choices=LEVEL_CHOICES, default='SILVER')
+
+    description = models.TextField(blank=True, null=True, verbose_name="О компании")
+    logo_url = models.URLField(blank=True, null=True, verbose_name="Ссылка на логотип")
+    website = models.URLField(blank=True, null=True, verbose_name="Сайт спонсора")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.level}) - {self.event.title}"
+
+
+class QAQuestion(models.Model):
+    """
+    Модель для 6.5 Live Q&A
+    Вопросы из зала к спикерам (с возможностью лайкать).
+    """
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='qa_questions')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+
+    text = models.TextField(verbose_name="Текст вопроса")
+    upvotes = models.PositiveIntegerField(default=0, verbose_name="Количество лайков")
+    is_answered = models.BooleanField(default=False, verbose_name="Отвечен ли вопрос?")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.text[:50]}... ({self.upvotes} votes)"
+
+
+class LivePoll(models.Model):
+    """
+    Модель для 6.5 Live Polls
+    Голосования (опросы), которые организатор запускает во время мероприятия.
+    """
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='polls')
+    question = models.CharField(max_length=255, verbose_name="Вопрос голосования")
+    is_active = models.BooleanField(default=False, verbose_name="Голосование активно?")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.question} - {'Active' if self.is_active else 'Closed'}"
+
+
+class PollOption(models.Model):
+    """
+    Варианты ответа для конкретного голосования.
+    """
+    poll = models.ForeignKey(LivePoll, on_delete=models.CASCADE, related_name='options')
+    text = models.CharField(max_length=255, verbose_name="Текст варианта")
+
+    def __str__(self):
+        return f"{self.poll.question} -> {self.text}"
+
+
+class PollVote(models.Model):
+    """
+    Голоса пользователей.
+    Отдельная таблица нужна, чтобы один юзер не мог проголосовать дважды!
+    """
+    poll = models.ForeignKey(LivePoll, on_delete=models.CASCADE, related_name='votes')
+    option = models.ForeignKey(PollOption, on_delete=models.CASCADE, related_name='received_votes')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+    class Meta:
+        # БЕЗОПАСНОСТЬ: Один пользователь может оставить только ОДИН голос в рамках одного опроса
+        unique_together = ('poll', 'user')
+
+    def __str__(self):
+        return f"{self.user.email} voted for {self.option.text}"
+

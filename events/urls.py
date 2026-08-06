@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import EventViewSet, OrderViewSet, TicketViewSet, ScanTicketView, SpeakerViewSet, AgendaSessionViewSet, \
-    MyScheduleViewSet
+    MyScheduleViewSet, AbstractSubmissionViewSet, SponsorViewSet, LivePollViewSet, QAQuestionViewSet
 # events/urls.py
 from rest_framework.routers import DefaultRouter
 from .views import ResaleViewSet # импортируем наш новый вьюсет
@@ -19,6 +19,10 @@ router.register(r'memberships', MembershipViewSet, basename='membership')
 router.register(r'speakers', SpeakerViewSet)
 router.register(r'sessions', AgendaSessionViewSet)
 router.register(r'my-schedule', MyScheduleViewSet, basename='my-schedule')
+router.register(r'sponsors', SponsorViewSet)
+router.register(r'submissions', AbstractSubmissionViewSet, basename='submissions')
+router.register(r'qa-questions', QAQuestionViewSet, basename='qa-questions')
+router.register(r'live-polls', LivePollViewSet, basename='live-polls')
 
 
 urlpatterns = [
