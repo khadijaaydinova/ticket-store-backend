@@ -37,7 +37,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    # Наши добавленные приложения:
     'django_filters', #DAY 7
     'drf_spectacular',
     'rest_framework',
@@ -45,8 +44,6 @@ INSTALLED_APPS = [
     'events',
 ]
 
-# Сразу добавь эту строку в самый конец файла settings.py.
-# Это укажет Django использовать нашу модель пользователя.
 AUTH_USER_MODEL = 'users.CustomUser'
 
 MIDDLEWARE = [
@@ -126,16 +123,6 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-# Настройки для REST Framework (сами добавили)
-#REST_FRAMEWORK = {
- #   'DEFAULT_AUTHENTICATION_CLASSES': (
-  #      # Сначала проверяем токен (для мобилок и фронтенда)
- #       'rest_framework_simplejwt.authentication.JWTAuthentication',
- #       # Затем проверяем классическую сессию (оставляем, чтобы нам было удобно тестировать API через браузер)
-   #     'rest_framework.authentication.SessionAuthentication',
- #       'drf_spectacular',
- #   )
-#}
 
 AUTHENTICATION_BACKENDS = [
     'users.backends.EmailOrUsernameModelBackend',
@@ -144,7 +131,7 @@ AUTHENTICATION_BACKENDS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication', # Эта настройка разрешает авторизацию через браузерную сессию
+        'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
@@ -152,10 +139,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_FILTER_BACKENDS': [
-        'django_filters.rest_framework.DjangoFilterBackend', # Для точного совпадения (категории, город)
-        'rest_framework.filters.SearchFilter',               # Для текстового поиска (название, описание)
-        'rest_framework.filters.OrderingFilter',             # Для сортировки (по дате, по цене)
-    ],
-
-
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter'
+    ]
 }

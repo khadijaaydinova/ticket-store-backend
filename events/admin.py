@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Event, TicketType, PromoCode, Order, OrderItem, Ticket, ExchangeRate, ResaleListing, GiftCard
+from .models import Event, TicketType, PromoCode, Order, OrderItem, Ticket, ExchangeRate, ResaleListing, GiftCard, LivePoll, PollOption, PollVote
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
@@ -65,6 +65,22 @@ class GiftCardAdmin(admin.ModelAdmin):
     list_filter = ('is_active',)
     search_fields = ('code',)
     readonly_fields = ('created_at',)
+
+
+class PollOptionInline(admin.TabularInline):
+    model = PollOption
+    extra = 2 # Будет показывать сразу 2 пустых поля для ответов (например, "Да" и "Нет")
+
+@admin.register(LivePoll)
+class LivePollAdmin(admin.ModelAdmin):
+    list_display = ('question', 'event', 'is_active', 'created_at')
+    list_filter = ('is_active', 'event')
+    inlines = [PollOptionInline]
+
+@admin.register(PollVote)
+class PollVoteAdmin(admin.ModelAdmin):
+    list_display = ('poll', 'option', 'user')
+    list_filter = ('poll',)
 
 # from django.contrib import admin
 # from .models import Event, TicketType, ExchangeRate, PromoCode, Order, OrderItem, ResaleListing

@@ -313,9 +313,11 @@ class QAQuestionSerializer(serializers.ModelSerializer):
         read_only_fields = ['user', 'upvotes', 'is_answered', 'created_at']
 
 class PollOptionSerializer(serializers.ModelSerializer):
+    votes_count = serializers.IntegerField(source='received_votes.count', read_only=True)
+
     class Meta:
         model = PollOption
-        fields = ['id', 'text']
+        fields = ['id', 'text', 'votes_count']
 
 class LivePollSerializer(serializers.ModelSerializer):
     # Вкладываем варианты ответа прямо в опрос, чтобы фронтенду было удобно их рендерить

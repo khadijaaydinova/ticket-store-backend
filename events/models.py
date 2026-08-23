@@ -1,13 +1,9 @@
-from django.db import models
-
-# Create your models here.
-import uuid # <--- Добавь это в самую верхнюю строчку файла к остальным импортам
+import uuid
 import string
 import random
 from django.db import models
 from users.models import Organization
 from django.conf import settings
-from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
@@ -30,7 +26,6 @@ class Event(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
 
-    # НОВЫЕ ПОЛЯ ИЗ ТЗ:
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='CONCERT')
     city = models.CharField(max_length=100, default='Baku')  # Дефолтный город
 
@@ -44,7 +39,6 @@ class Event(models.Model):
 
 
 class TicketType(models.Model):
-    # Валюты согласно требованиям (AZN, USD, EUR, TRY)
     CURRENCY_CHOICES = [
         ('AZN', 'Azerbaijani Manat'),
         ('USD', 'US Dollar'),
@@ -52,32 +46,26 @@ class TicketType(models.Model):
         ('TRY', 'Turkish Lira'),
     ]
 
-    # Тип рассадки для поддержки интерактивных карт залов
     SEATING_CHOICES = [
         ('GA', 'General Admission'),
         ('RESERVED', 'Reserved Seating'),
     ]
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='ticket_types')
-    name = models.CharField(max_length=100)  # Например: "VIP", "Early Bird", "Student", "Group"
+    name = models.CharField(max_length=100)  # Example: "VIP", "Early Bird", "Student", "Group"
 
-    # Блок цены
     price = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default='AZN')
 
-    # Блок рассадки
     seating_type = models.CharField(max_length=15, choices=SEATING_CHOICES, default='GA')
 
-    # Блок лимитов по количеству
     quantity_total = models.PositiveIntegerField(help_text="Общее количество билетов этого типа")
     quantity_sold = models.PositiveIntegerField(default=0, help_text="Сколько уже продано")
 
-    # Блок ограничений на одну транзакцию (для групповых покупок и защиты от спекулянтов)
     min_per_order = models.PositiveIntegerField(default=1,
                                                 help_text="Минимум билетов в одном заказе (например, 3 для Group)")
     max_per_order = models.PositiveIntegerField(default=10, help_text="Максимум билетов в одном заказе")
 
-    # Период продаж (sales window)
     start_sale_date = models.DateTimeField(blank=True, null=True)
     end_sale_date = models.DateTimeField(blank=True, null=True)
 
@@ -86,7 +74,6 @@ class TicketType(models.Model):
 
     @property
     def is_available(self):
-        # Логика проверки, остались ли билеты в наличии
         return self.quantity_sold < self.quantity_total
 
 
@@ -97,14 +84,13 @@ class PromoCode(models.Model):
     ]
 
     code = models.CharField(max_length=20, unique=True, help_text="Сам промокод, например SUMMER20")
-    # Если event не указан (null=True), промокод действует на ВСЕ мероприятия
+    # if no event specified (null=True), then promo code is for all events
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='promo_codes', null=True, blank=True)
 
     discount_type = models.CharField(max_length=10, choices=DISCOUNT_TYPES, default='PERCENT')
     discount_value = models.DecimalField(max_digits=10, decimal_places=2,
                                          help_text="Размер скидки (например, 20 для 20%)")
 
-    # Ограничения по времени и количеству
     valid_from = models.DateTimeField()
     valid_to = models.DateTimeField()
     max_uses = models.PositiveIntegerField(null=True, blank=True,
@@ -191,10 +177,9 @@ class Ticket(models.Model):
     ticket_type = models.ForeignKey(TicketType, on_delete=models.PROTECT, related_name='tickets', null=True)
     code = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     is_scanned = models.BooleanField(default=False)
-    # НОВОЕ ПОЛЕ: Когда именно был просканирован билет.
+
     scanned_at = models.DateTimeField(null=True, blank=True)
 
-    # ДОБАВЛЯЕМ ЭТУ СТРОЧКУ: Активен ли билет? (При отмене заказа будем менять на False)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
